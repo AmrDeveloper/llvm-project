@@ -840,14 +840,16 @@ public:
     return {};
   }
   mlir::Value VisitTypeTraitExpr(const TypeTraitExpr *e) {
-    cgf.cgm.errorNYI(e->getSourceRange(), "ScalarExprEmitter: type trait");
+    mlir::Location loc = cgf.getLoc(e->getExprLoc());
+    if (e->isStoredAsBoolean())
+      return builder.getBool(e->getBoolValue(), loc);
+    cgf.cgm.errorNYI(e->getSourceRange(),
+                     "ScalarExprEmitter: TypeTraitExpr stored as int");
     return {};
   }
   mlir::Value
   VisitConceptSpecializationExpr(const ConceptSpecializationExpr *e) {
-    cgf.cgm.errorNYI(e->getSourceRange(),
-                     "ScalarExprEmitter: concept specialization");
-    return {};
+    return builder.getBool(e->isSatisfied(), cgf.getLoc(e->getExprLoc()));
   }
   mlir::Value VisitRequiresExpr(const RequiresExpr *e) {
     cgf.cgm.errorNYI(e->getSourceRange(), "ScalarExprEmitter: requires");
@@ -859,9 +861,7 @@ public:
     return {};
   }
   mlir::Value VisitExpressionTraitExpr(const ExpressionTraitExpr *e) {
-    cgf.cgm.errorNYI(e->getSourceRange(),
-                     "ScalarExprEmitter: expression trait");
-    return {};
+    return builder.getBool(e->getValue(), cgf.getLoc(e->getExprLoc()));
   }
   mlir::Value VisitCXXPseudoDestructorExpr(const CXXPseudoDestructorExpr *e) {
     cgf.cgm.errorNYI(e->getSourceRange(),
@@ -1340,13 +1340,11 @@ public:
   }
 
   mlir::Value VisitBinPtrMemD(const BinaryOperator *e) {
-    cgf.cgm.errorNYI(e->getSourceRange(), "ScalarExprEmitter: ptr mem d");
-    return {};
+    return emitLoadOfLValue(e);
   }
 
   mlir::Value VisitBinPtrMemI(const BinaryOperator *e) {
-    cgf.cgm.errorNYI(e->getSourceRange(), "ScalarExprEmitter: ptr mem i");
-    return {};
+    return emitLoadOfLValue(e);
   }
 
   // Other Operators.
@@ -1356,8 +1354,7 @@ public:
   }
 
   mlir::Value VisitChooseExpr(ChooseExpr *e) {
-    cgf.cgm.errorNYI(e->getSourceRange(), "ScalarExprEmitter: choose");
-    return {};
+    return Visit(e->getChosenSubExpr());
   }
 
   mlir::Value VisitObjCStringLiteral(const ObjCStringLiteral *e) {

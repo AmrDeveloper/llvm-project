@@ -579,10 +579,14 @@ Code Completion
 Static Analyzer
 ---------------
 
+Crash and bug fixes
+^^^^^^^^^^^^^^^^^^^
+
+- Fixed a crash when explicitly casting a complex type to or from an atomic complex type. (#GH172208)
+
 .. comment:
   This is for the Static Analyzer.
   Using the caret `^^^` underlining for subsections:
-    - Crash and bug fixes
     - New checkers and features
     - Improvements
     - Moved checkers

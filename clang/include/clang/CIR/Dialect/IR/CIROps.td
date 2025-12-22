@@ -5517,6 +5517,33 @@ def CIR_EhInflightOp : CIR_Op<"eh.inflight_exception"> {
 }
 
 //===----------------------------------------------------------------------===//
+// Exception related: EhLandingpadOp
+//===----------------------------------------------------------------------===//
+def CIR_EhLandingpadOp : CIR_Op<"eh.landingpad"> {
+  let summary = "Materialize the catch clause formal parameter";
+  let description = [{
+    This operation is expected to be the first operation in the unwind
+    destination basic blocks of a `cir.try_call` operation.
+
+    `cir.eh.landingpad` returns eh_token which lowered to exception_ptr and
+    type_id except for Windows platform it will be lowered to none to represent
+    funclet token.
+
+    Example:
+    ```mlir
+    %eh_token = cir.eh_landingpad
+    ```
+  }];
+
+  let results = (outs CIR_EhToken:$eh_token);
+  let assemblyFormat = [{
+    attr-dict
+  }];
+
+  let hasLLVMLowering = false;
+}
+
+//===----------------------------------------------------------------------===//
 // Atomic operations
 //===----------------------------------------------------------------------===//
 

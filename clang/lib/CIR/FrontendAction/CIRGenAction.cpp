@@ -101,6 +101,7 @@ public:
     Gen->HandleTranslationUnit(C);
 
     if (!FEOptions.ClangIRDisableCIRVerifier) {
+      Gen->getModule()->dumpPretty();
       if (!Gen->verifyModule()) {
         CI.getDiagnostics().Report(
             diag::err_cir_verification_failed_pre_passes);

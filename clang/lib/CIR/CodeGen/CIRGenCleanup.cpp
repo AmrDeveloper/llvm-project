@@ -18,7 +18,10 @@
 
 #include "CIRGenCleanup.h"
 #include "CIRGenFunction.h"
+#include "mlir/IR/Builders.h"
 
+#include "clang/CIR/Dialect/IR/CIRDialect.h"
+#include "clang/CIR/Dialect/IR/CIROpsEnums.h"
 #include "clang/CIR/MissingFeatures.h"
 
 using namespace clang;
@@ -147,11 +150,46 @@ void *EHScopeStack::pushCleanup(CleanupKind kind, size_t size) {
 
   assert(!cir::MissingFeatures::innermostEHScope());
 
-  EHCleanupScope *scope = new (buffer) EHCleanupScope(
-      size, branchFixups.size(), innermostNormalCleanup, innermostEHScope);
+  {
+    auto builder = cgf->getBuilder();
+
+    // Check if this scope should be nested
+    if (!cgf->ehCleanupScopesStack.empty()) {
+      auto top = cgf->ehCleanupScopesStack.top();
+      builder.setInsertionPointToEnd(&top.getBodyRegion().front());
+    }
+
+    auto loc = builder.getUnknownLoc();
+    auto cleanupScope = cir::CleanupScopeOp::create(
+        builder, loc, cir::CleanupKind::All,
+        /*bodyBuilder=*/
+        [&](mlir::OpBuilder &b, mlir::Location loc) {
+          // Terminations will be handled in popCleanup
+        },
+        /*cleanupBuilder=*/
+        [&](mlir::OpBuilder &b, mlir::Location loc) {
+          cir::YieldOp::create(builder, loc);
+        });
+    cgf->ehCleanupScopesStack.push(cleanupScope);
+  }
+
+  // Per C++ [except.terminate], it is implementation-defined whether none,
+  // some, or all cleanups are called before std::terminate. Thus, when
+  // terminate is the current EH scope, we may skip adding any EH cleanup
+  // scopes.
+  if (innermostEHScope != stable_end() &&
+      find(innermostEHScope)->getKind() == EHScope::Terminate)
+    isEHCleanup = false;
+
+  EHCleanupScope *scope = new (buffer)
+      EHCleanupScope(isNormalCleanup, isEHCleanup, size, branchFixups.size(),
+                     innermostNormalCleanup, innermostEHScope);
 
   if (isNormalCleanup)
     innermostNormalCleanup = stable_begin();
+
+  if (isEHCleanup)
+    innermostEHScope = stable_begin();
 
   if (isLifetimeMarker)
     cgf->cgm.errorNYI("push lifetime marker cleanup");
@@ -167,7 +205,23 @@ void *EHScopeStack::pushCleanup(CleanupKind kind, size_t size) {
 void EHScopeStack::popCleanup() {
   assert(!empty() && "popping exception stack when not empty");
 
-  assert(isa<EHCleanupScope>(*begin()));
+  {
+    assert(!cgf->ehCleanupScopesStack.empty());
+    cir::CleanupScopeOp cleanupScope = cgf->ehCleanupScopesStack.top();
+    auto *block = &cleanupScope.getBodyRegion().back();
+    bool hasTerminator =
+        cleanupScope.getBodyRegion().back().mightHaveTerminator();
+    assert(isa<EHCleanupScope>(*begin()));
+    if (!hasTerminator) {
+      mlir::OpBuilder::InsertionGuard guard(cgf->getBuilder());
+      cgf->getBuilder().setInsertionPointToEnd(block);
+      cir::YieldOp::create(cgf->getBuilder(),
+                           cgf->getBuilder().getUnknownLoc());
+    }
+
+    cgf->ehCleanupScopesStack.pop();
+  }
+
   EHCleanupScope &cleanup = cast<EHCleanupScope>(*begin());
   innermostNormalCleanup = cleanup.getEnclosingNormalCleanup();
   deallocate(cleanup.getAllocatedSize());

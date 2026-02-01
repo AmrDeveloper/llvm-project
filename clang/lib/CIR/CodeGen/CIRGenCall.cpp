@@ -15,6 +15,7 @@
 #include "CIRGenCXXABI.h"
 #include "CIRGenFunction.h"
 #include "CIRGenFunctionInfo.h"
+#include "mlir/IR/Block.h"
 #include "clang/CIR/MissingFeatures.h"
 
 using namespace clang;
@@ -613,17 +614,22 @@ emitCallLikeOp(CIRGenFunction &cgf, mlir::Location callLoc,
     // synthetic cir.try because this didn't come from code generating from a
     // try/catch in C++.
     assert(cgf.curLexScope && "expected scope");
+
     cir::TryOp tryOp = cgf.curLexScope->getClosestTryParent();
+
+    mlir::Block *insertionBlock = builder.getInsertionBlock();
+    mlir::Block::iterator insertionPoint = builder.getInsertionPoint();
+
     if (!tryOp) {
-      cgf.cgm.errorNYI(
-          "emitCallLikeOp: call does not have an associated cir.try");
-      return {};
+      auto cleanupScope = cgf.ehCleanupScopesStack.top();
+      mlir::Block *lastBlock = &cleanupScope.getBodyRegion().back();
+      builder.setInsertionPointToStart(lastBlock);
     }
 
-    if (tryOp.getSynthetic()) {
-      cgf.cgm.errorNYI("emitCallLikeOp: tryOp synthetic");
-      return {};
-    }
+    // if (tryOp.getSynthetic()) {
+    //   cgf.cgm.errorNYI("emitCallLikeOp: tryOp synthetic");
+    //   return {};
+    // }
 
     cir::CallOp callOpWithExceptions;
     if (indirectFuncTy) {
@@ -634,7 +640,10 @@ emitCallLikeOp(CIRGenFunction &cgf, mlir::Location callLoc,
     callOpWithExceptions =
         builder.createCallOp(callLoc, directFuncOp, cirCallArgs);
 
-    cgf.populateCatchHandlersIfRequired(tryOp);
+    builder.setInsertionPoint(insertionBlock, insertionPoint);
+
+    if (tryOp != nullptr)
+      cgf.populateCatchHandlersIfRequired(tryOp);
     return callOpWithExceptions;
   }
 

@@ -91,6 +91,8 @@ public:
   /// variable currently being initialized.
   clang::GlobalDecl curGD;
 
+  std::stack<cir::CleanupScopeOp> ehCleanupScopesStack;
+
   /// Unified return block.
   /// In CIR this is a function because each scope might have
   /// its associated return block.

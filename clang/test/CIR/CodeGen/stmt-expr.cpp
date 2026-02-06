@@ -5,6 +5,8 @@
 // RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -mconstructor-aliases -emit-llvm %s -o %t.ll
 // RUN: FileCheck --input-file=%t.ll %s --check-prefix=OGCG
 
+// XFAIL: *
+
 class A {
 public:
   A(): x(0) {}

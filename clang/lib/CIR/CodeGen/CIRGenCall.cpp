@@ -816,16 +816,6 @@ emitCallLikeOp(CIRGenFunction &cgf, mlir::Location callLoc,
     // try/catch in C++.
     assert(cgf.curLexScope && "expected scope");
     cir::TryOp tryOp = cgf.curLexScope->getClosestTryParent();
-    if (!tryOp) {
-      cgf.cgm.errorNYI(
-          "emitCallLikeOp: call does not have an associated cir.try");
-      return {};
-    }
-
-    if (tryOp.getSynthetic()) {
-      cgf.cgm.errorNYI("emitCallLikeOp: tryOp synthetic");
-      return {};
-    }
 
     cir::CallOp callOpWithExceptions;
     if (indirectFuncTy) {
@@ -833,10 +823,16 @@ emitCallLikeOp(CIRGenFunction &cgf, mlir::Location callLoc,
       return {};
     }
 
+    if (!cgf.ehCleanupScopesStack.empty()) {
+      cir::CleanupScopeOp cleanupScope = cgf.ehCleanupScopesStack.top();
+      builder.setInsertionPointToEnd(&cleanupScope.getBodyRegion().back());
+    }
+
     callOpWithExceptions =
         builder.createCallOp(callLoc, directFuncOp, cirCallArgs);
 
-    cgf.populateCatchHandlersIfRequired(tryOp);
+    if (tryOp != nullptr)
+      cgf.populateCatchHandlersIfRequired(tryOp);
     return callOpWithExceptions;
   }
 

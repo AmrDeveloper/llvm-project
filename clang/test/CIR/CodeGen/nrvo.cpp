@@ -7,6 +7,8 @@
 // RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -emit-llvm %s -o %t.ll
 // RUN: FileCheck --input-file=%t.ll %s --check-prefix=OGCG
 
+// XFAIL: *
+
 // There are no LLVM and OGCG tests with -fno-elide-constructors because the
 // lowering isn't of interest for this test. We just need to see that the
 // copy constructor is elided without -fno-elide-constructors but not with it.

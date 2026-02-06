@@ -675,6 +675,8 @@ public:
                                               cir::GlobalOp gv,
                                               cir::GetGlobalOp gvAddr);
 
+  std::stack<cir::CleanupScopeOp> ehCleanupScopesStack;
+
   /// Enter the cleanups necessary to complete the given phase of destruction
   /// for a destructor. The end result should call destructors on members and
   /// base classes in reverse order of their construction.

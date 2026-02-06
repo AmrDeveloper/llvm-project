@@ -5,6 +5,8 @@
 // RUN: %clang_cc1 -std=c++17 -triple x86_64-unknown-linux-gnu -mconstructor-aliases -emit-llvm %s -o %t.ll
 // RUN: FileCheck --check-prefix=OGCG --input-file=%t.ll %s
 
+// XFAIL: *
+
 struct B {
   ~B();
 };

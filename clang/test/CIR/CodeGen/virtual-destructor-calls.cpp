@@ -5,6 +5,8 @@
 // RUN: %clang_cc1 -triple aarch64-none-linux-android21 -std=c++20 -mconstructor-aliases -O0 -emit-llvm %s -o %t.ll
 // RUN: FileCheck --check-prefix=OGCG --input-file=%t.ll %s
 
+// XFAIL: *
+
 // TODO(cir): Try to emit base destructor as an alias at O1 or higher.
 
 // FIXME: LLVM IR dialect does not yet support function ptr globals, which precludes

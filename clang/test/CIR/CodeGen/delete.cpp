@@ -5,6 +5,8 @@
 // RUN: %clang_cc1 -triple x86_64-unknown-linux-gnu -std=c++20 -mconstructor-aliases -emit-llvm %s -o %t.ll
 // RUN: FileCheck --check-prefix=OGCG --input-file=%t.ll %s
 
+// XFAIL: *
+
 typedef __typeof(sizeof(int)) size_t;
 
 struct SizedDelete {

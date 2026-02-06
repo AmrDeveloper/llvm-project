@@ -17,8 +17,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "CIRGenCleanup.h"
+#include "CIRGenBuilder.h"
 #include "CIRGenFunction.h"
 
+#include "clang/CIR/Dialect/IR/CIRDialect.h"
 #include "clang/CIR/MissingFeatures.h"
 
 using namespace clang;
@@ -147,6 +149,27 @@ void *EHScopeStack::pushCleanup(CleanupKind kind, size_t size) {
 
   assert(!cir::MissingFeatures::innermostEHScope());
 
+  if (!cgf->ehCleanupScopesStack.empty()) {
+    cgf->cgm.errorNYI("pushCleanup: nested cleanup scopes");
+    return nullptr;
+  }
+
+  CIRGenBuilderTy builder = cgf->getBuilder();
+  mlir::Location loc = builder.getUnknownLoc();
+  auto cleanupScope = cir::CleanupScopeOp::create(
+      builder, loc, cir::CleanupKind::All,
+      /*bodyBuilder=*/
+      [&](mlir::OpBuilder &b, mlir::Location loc) {
+        // Terminations will be handled in popCleanup
+      },
+      /*cleanupBuilder=*/
+      [&](mlir::OpBuilder &b, mlir::Location loc) {
+        cir::YieldOp::create(builder, loc);
+      });
+
+  builder.setInsertionPointToEnd(&cleanupScope.getBodyRegion().back());
+  cgf->ehCleanupScopesStack.push(cleanupScope);
+
   // Per C++ [except.terminate], it is implementation-defined whether none,
   // some, or all cleanups are called before std::terminate. Thus, when
   // terminate is the current EH scope, we may skip adding any EH cleanup
@@ -178,6 +201,8 @@ void *EHScopeStack::pushCleanup(CleanupKind kind, size_t size) {
 
 void EHScopeStack::popCleanup() {
   assert(!empty() && "popping exception stack when not empty");
+  assert(!cgf->ehCleanupScopesStack.empty() &&
+         "popping eh cleanup scopes stack when not empty");
 
   assert(isa<EHCleanupScope>(*begin()));
   EHCleanupScope &cleanup = cast<EHCleanupScope>(*begin());
@@ -198,6 +223,17 @@ void EHScopeStack::popCleanup() {
       popNullFixups();
     }
   }
+
+  cir::CleanupScopeOp cleanupScope = cgf->ehCleanupScopesStack.top();
+  auto *block = &cleanupScope.getBodyRegion().back();
+  if (!cleanupScope.getBodyRegion().back().mightHaveTerminator()) {
+    mlir::OpBuilder::InsertionGuard guard(cgf->getBuilder());
+    cgf->getBuilder().setInsertionPointToEnd(block);
+    cir::YieldOp::create(cgf->getBuilder(), cgf->getBuilder().getUnknownLoc());
+  }
+
+  cgf->getBuilder().setInsertionPointAfter(cleanupScope);
+  cgf->ehCleanupScopesStack.pop();
 }
 
 bool EHScopeStack::requiresCatchOrCleanup() const {
@@ -248,9 +284,12 @@ static mlir::Block *createNormalEntry(CIRGenFunction &cgf,
 /// any branch fixups on the cleanup.
 void CIRGenFunction::popCleanupBlock() {
   assert(!ehStack.empty() && "cleanup stack is empty!");
+  assert(!ehCleanupScopesStack.empty() && "cleanup scopes stack is empty!");
   assert(isa<EHCleanupScope>(*ehStack.begin()) && "top not a cleanup!");
   EHCleanupScope &scope = cast<EHCleanupScope>(*ehStack.begin());
   assert(scope.getFixupDepth() <= ehStack.getNumBranchFixups());
+
+  cir::CleanupScopeOp cleanScope = ehCleanupScopesStack.top();
 
   // Remember activation information.
   bool isActive = scope.isActive();
@@ -309,6 +348,9 @@ void CIRGenFunction::popCleanupBlock() {
     assert(!cir::MissingFeatures::ehCleanupScopeRequiresEHCleanup());
     ehStack.popCleanup();
     scope.markEmitted();
+
+    mlir::OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(&cleanScope.getCleanupRegion().back());
     emitCleanup(*this, cleanup, cleanupFlags);
   } else {
     // Otherwise, the best approach is to thread everything through
@@ -371,6 +413,8 @@ void CIRGenFunction::popCleanupBlock() {
     ehStack.popCleanup();
     assert(ehStack.hasNormalCleanups() == hasEnclosingCleanups);
 
+    mlir::OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(&cleanScope.getCleanupRegion().back());
     emitCleanup(*this, cleanup, cleanupFlags);
 
     // Append the prepared cleanup prologue from above.

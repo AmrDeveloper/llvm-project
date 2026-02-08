@@ -1,8 +1,6 @@
 // RUN: %clang_cc1 -std=c++11 -triple aarch64-none-linux-android21 -fclangir -emit-cir %s -o %t.cir
 // RUN: FileCheck --check-prefix=CIR --input-file=%t.cir %s
 
-// XFAIL: *
-
 struct Flub {
   int a = 123;
 };

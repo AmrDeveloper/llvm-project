@@ -823,15 +823,10 @@ emitCallLikeOp(CIRGenFunction &cgf, mlir::Location callLoc,
       return {};
     }
 
-    if (!cgf.ehCleanupScopesStack.empty()) {
-      cir::CleanupScopeOp cleanupScope = cgf.ehCleanupScopesStack.top();
-      builder.setInsertionPointToEnd(&cleanupScope.getBodyRegion().back());
-    }
-
     callOpWithExceptions =
         builder.createCallOp(callLoc, directFuncOp, cirCallArgs);
 
-    if (tryOp != nullptr)
+    if (tryOp)
       cgf.populateCatchHandlersIfRequired(tryOp);
     return callOpWithExceptions;
   }

@@ -19,6 +19,7 @@
 #include "EHScopeStack.h"
 #include "mlir/IR/Value.h"
 #include "clang/AST/StmtCXX.h"
+#include "clang/CIR/Dialect/IR/CIRDialect.h"
 
 namespace clang::CIRGen {
 
@@ -200,6 +201,8 @@ class alignas(EHScopeStack::ScopeStackAlignment) EHCleanupScope
   /// from this index onwards belong to this scope.
   unsigned fixupDepth = 0;
 
+  cir::CleanupScopeOp cleanupScope;
+
 public:
   /// Gets the size required for a lazy cleanup scope with the given
   /// cleanup-data requirements.
@@ -212,11 +215,12 @@ public:
   }
 
   EHCleanupScope(bool isNormal, bool isEH, unsigned cleanupSize,
-                 unsigned fixupDepth,
+                 unsigned fixupDepth, cir::CleanupScopeOp cleanupScope,
                  EHScopeStack::stable_iterator enclosingNormal,
                  EHScopeStack::stable_iterator enclosingEH)
       : EHScope(EHScope::Cleanup, enclosingEH),
-        enclosingNormal(enclosingNormal), fixupDepth(fixupDepth) {
+        enclosingNormal(enclosingNormal), fixupDepth(fixupDepth),
+        cleanupScope(cleanupScope) {
     cleanupBits.isNormalCleanup = isNormal;
     cleanupBits.isEHCleanup = isEH;
     cleanupBits.isActive = true;
@@ -260,6 +264,8 @@ public:
   }
 
   void markEmitted() {}
+
+  cir::CleanupScopeOp getCleanupScope() { return cleanupScope; }
 };
 
 /// A non-stable pointer into the scope stack.

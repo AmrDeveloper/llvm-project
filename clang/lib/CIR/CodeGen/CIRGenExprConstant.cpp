@@ -1893,6 +1893,10 @@ mlir::Attribute ConstantEmitter::tryEmitPrivate(const APValue &value,
         desiredVecTy,
         mlir::ArrayAttr::get(cgm.getBuilder().getContext(), elements));
   }
+  case APValue::Matrix: {
+    cgm.errorNYI("ConstExprEmitter::tryEmitPrivate Matrix");
+    break;
+  }
   case APValue::MemberPointer: {
     assert(!cir::MissingFeatures::cxxABI());
 

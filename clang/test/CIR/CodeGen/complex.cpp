@@ -1883,7 +1883,7 @@ void compare_two_complex_bin_ops() {
 // CIR: %[[TMP_B:.*]] = cir.load {{.*}} %[[B_ADDR]] : !cir.ptr<!cir.complex<!cir.double>>, !cir.complex<!cir.double>
 // CIR: %[[TMP_A:.*]] = cir.load {{.*}} %[[A_ADDR]] : !cir.ptr<!cir.complex<!cir.double>>, !cir.complex<!cir.double>
 // CIR: %[[COMPLEX_BA:.*]] = cir.complex.add %[[TMP_B]], %[[TMP_A]] : !cir.complex<!cir.double>
-// CIR: %[[RESULT:.*]] = cir.cmp(ne, %[[COMPLEX_AB]], %[[COMPLEX_BA]]) : !cir.complex<!cir.double>, !cir.bool
+// CIR: %[[RESULT:.*]] = cir.cmp ne %[[COMPLEX_AB]], %[[COMPLEX_BA]] : !cir.complex<!cir.double>
 // CIR: cir.store {{.*}} %[[RESULT]], %[[C_ADDR]] : !cir.bool, !cir.ptr<!cir.bool>
 
 // LLVM: %[[A_ADDR:.*]] = alloca { double, double }, i64 1, align 8

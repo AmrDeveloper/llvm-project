@@ -1035,7 +1035,7 @@ void call_function_inside_try_catch_with_aggregate_exception_type() {
 // LLVM: [[TRY_SCOPE]]:
 // LLVM:   br label %[[TRY_BEGIN:.*]]
 // LLVM: [[TRY_BEGIN]]:
-// LLVM:   %[[CALL:.*]] = invoke i32 @_Z8divisionv()
+// LLVM:   %[[CALL:.*]] = invoke noundef i32 @_Z8divisionv()
 // LLVM:           to label %[[INVOKE_CONT:.*]] unwind label %[[LANDING_PAD:.*]]
 // LLVM: [[INVOKE_CONT]]:
 // LLVM:   br label %[[TRY_CONT:.*]]

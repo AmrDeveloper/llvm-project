@@ -305,6 +305,8 @@ Improvements to Clang's diagnostics
   (``-fimplicit-module-maps``). This does not affect module maps specified
   explicitly via ``-fmodule-map-file=``.
 
+- Clang now emits error when attribute is missing closing ``]]`` followed by ``;;``. (#GH187223)
+
 Improvements to Clang's time-trace
 ----------------------------------
 

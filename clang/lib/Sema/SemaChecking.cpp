@@ -13071,12 +13071,14 @@ void Sema::CheckImplicitConversion(Expr *E, QualType T, SourceLocation CC,
       if (SourceMgr.isInSystemMacro(CC) || Target->isBooleanType())
         return;
 
-      const Type *OriginalTargetTy = Context.getCanonicalType(T).getTypePtr();
+      if (!getLangOpts().CPlusPlus && T->isVectorType()) {
+        return DiagnoseImpCast(*this, E, T, CC,
+                               diag::err_impcast_incompatible_type);
+      }
+
       return DiagnoseImpCast(*this, E, T, CC,
                              getLangOpts().CPlusPlus
                                  ? diag::err_impcast_complex_scalar
-                             : OriginalTargetTy->isVectorType()
-                                 ? diag::err_impcast_incompatible_type
                                  : diag::warn_impcast_complex_scalar);
     }
 

@@ -462,6 +462,7 @@ Miscellaneous Clang Crashes Fixed
 - Fixed an assertion failure when casting a function pointer with a target with a non-default program address space. (#GH186210)
 - Fixed a crash when ``decltype(__builtin_FUNCTION())`` is used as a template type argument. (#GH167433)
 - Fixed an assertion failure when parsing an invalid ``decltype`` specifier with missing parentheses or extra semicolons. (#GH188014)
+- Fixed a crash when explicitly casting a complex type to or from an atomic complex type. (#GH172208)
 
 OpenACC Specific Changes
 ------------------------
@@ -579,14 +580,10 @@ Code Completion
 Static Analyzer
 ---------------
 
-Crash and bug fixes
-^^^^^^^^^^^^^^^^^^^
-
-- Fixed a crash when explicitly casting a complex type to or from an atomic complex type. (#GH172208)
-
 .. comment:
   This is for the Static Analyzer.
   Using the caret `^^^` underlining for subsections:
+    - Crash and bug fixes
     - New checkers and features
     - Improvements
     - Moved checkers

@@ -281,6 +281,47 @@ mlir::LogicalResult ItaniumEHLowering::lowerFunc(cir::FuncOp funcOp) {
   return mlir::success();
 }
 
+static mlir::Value initCatchParam(mlir::OpBuilder &builder,
+                                  cir::BeginCatchOp op,
+                                  mlir::Value beginCatchCall) {
+  mlir::Value result = beginCatchCall;
+  mlir::Type expectedPtrType = op.getExnPtr().getType();
+
+  auto exceptionType =
+      mlir::cast<cir::PointerType>(expectedPtrType).getPointee();
+
+  if (auto exnPointeeType = mlir::dyn_cast<cir::PointerType>(exceptionType)) {
+    if (auto exnPointeePtrType =
+            mlir::dyn_cast<cir::PointerType>(exnPointeeType.getPointee())) {
+      if (mlir::isa<cir::RecordType>(exnPointeePtrType.getPointee())) {
+        auto parentFunc = op->getParentOfType<cir::FuncOp>();
+        mlir::Block *entryBlock = &parentFunc.getRegion().front();
+
+        mlir::Value exnPtrTmp;
+        {
+          mlir::OpBuilder::InsertionGuard guard(builder);
+          builder.setInsertionPointToStart(entryBlock);
+          exnPtrTmp = cir::AllocaOp::create(
+              builder, op->getLoc(), expectedPtrType, exceptionType,
+              "exn.byref.tmp", builder.getI64IntegerAttr(8));
+        }
+
+        result = cir::CastOp::create(builder, op.getLoc(), exceptionType,
+                                     cir::CastKind::bitcast, result);
+
+        cir::StoreOp::create(builder, op.getLoc(), result, exnPtrTmp, {}, {},
+                             {}, {});
+        result = exnPtrTmp;
+      }
+    }
+  }
+
+  return result.getType() == expectedPtrType
+             ? result
+             : cir::CastOp::create(builder, op->getLoc(), expectedPtrType,
+                                   cir::CastKind::bitcast, result);
+}
+
 /// Lower all EH operations connected to a single cir.eh.initiate.
 ///
 /// The cir.eh.initiate is the root of a token graph. The token it produces
@@ -394,13 +435,8 @@ void ItaniumEHLowering::lowerEhInitiate(
         auto callOp = cir::CallOp::create(
             builder, op.getLoc(), mlir::FlatSymbolRefAttr::get(beginCatchFunc),
             u8PtrType, mlir::ValueRange{exnPtr});
-        mlir::Value castResult = callOp.getResult();
-        mlir::Type expectedPtrType = op.getExnPtr().getType();
-        if (castResult.getType() != expectedPtrType)
-          castResult =
-              cir::CastOp::create(builder, op.getLoc(), expectedPtrType,
-                                  cir::CastKind::bitcast, callOp.getResult());
-        op.getExnPtr().replaceAllUsesWith(castResult);
+        mlir::Value result = initCatchParam(builder, op, callOp.getResult());
+        op.getExnPtr().replaceAllUsesWith(result);
         op.erase();
       } else if (auto op = mlir::dyn_cast<cir::EhDispatchOp>(user)) {
         // Read catch types from the dispatch and set them on the inflight op.

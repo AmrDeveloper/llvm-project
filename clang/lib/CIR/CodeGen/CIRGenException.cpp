@@ -273,6 +273,184 @@ void CIRGenFunction::addCatchHandlerAttr(
   }
 }
 
+namespace {
+/// From traditional LLVM, useful info for LLVM lowering support:
+/// A cleanup to call __cxa_end_catch.  In many cases, the caught
+/// exception type lets us state definitively that the thrown exception
+/// type does not have a destructor.  In particular:
+///   - Catch-alls tell us nothing, so we have to conservatively
+///     assume that the thrown exception might have a destructor.
+///   - Catches by reference behave according to their base types.
+///   - Catches of non-record types will only trigger for exceptions
+///     of non-record types, which never have destructors.
+///   - Catches of record types can trigger for arbitrary subclasses
+///     of the caught type, so we have to assume the actual thrown
+///     exception type might have a throwing destructor, even if the
+///     caught type's destructor is trivial or nothrow.
+struct CallEndCatch final : EHScopeStack::Cleanup {
+  CallEndCatch(bool mightThrow, mlir::Value catchToken)
+      : mightThrow(mightThrow), catchToken(catchToken) {}
+  bool mightThrow;
+  mlir::Value catchToken;
+
+  void emit(CIRGenFunction &cgf, Flags flags) override {
+    // Traditional LLVM codegen would emit a call to __cxa_end_catch
+    // here. For CIR, just let it pass since the cleanup is going
+    // to be emitted on a later pass when lowering the catch region.
+    // CGF.EmitRuntimeCallOrTryCall(getEndCatchFn(CGF.CGM));
+    cir::EndCatchOp::create(cgf.getBuilder(), *cgf.currSrcLoc, catchToken);
+    cir::YieldOp::create(cgf.getBuilder(), *cgf.currSrcLoc);
+  }
+};
+} // namespace
+
+static mlir::Value callBeginCatch(CIRGenFunction &cgf, mlir::Value ehToken,
+                                  mlir::Type exnPtrTy, bool endMightThrow) {
+  auto catchTokenTy = cir::CatchTokenType::get(cgf.getBuilder().getContext());
+  auto beginCatch = cir::BeginCatchOp::create(cgf.getBuilder(),
+                                              cgf.getBuilder().getUnknownLoc(),
+                                              catchTokenTy, exnPtrTy, ehToken);
+
+  cgf.ehStack.pushCleanup<CallEndCatch>(
+      NormalAndEHCleanup,
+      endMightThrow && !cgf.cgm.getLangOpts().AssumeNothrowExceptionDtor,
+      beginCatch.getCatchToken());
+
+  return beginCatch.getExnPtr();
+}
+
+/// A "special initializer" callback for initializing a catch
+/// parameter during catch initialization.
+static void initCatchParam(CIRGenFunction &cgf, mlir::Value ehToken,
+                           const VarDecl &catchParam, Address paramAddr,
+                           SourceLocation loc) {
+  CIRGenBuilderTy builder = cgf.getBuilder();
+  CanQualType catchType =
+      cgf.cgm.getASTContext().getCanonicalType(catchParam.getType());
+  mlir::Type cirCatchTy = cgf.convertTypeForMem(catchType);
+  mlir::Type exnPtrTy = builder.getPointerTo(cirCatchTy);
+  CharUnits caughtExnAlignment = cgf.getPointerAlign();
+
+  // If we're catching by reference, we can just cast the object
+  // pointer to the appropriate pointer.
+  if (isa<ReferenceType>(catchType)) {
+    QualType caughtType = cast<ReferenceType>(catchType)->getPointeeType();
+    // We have no way to tell the personality function that we're
+    // catching by reference, so if we're catching a pointer,
+    // __cxa_begin_catch will actually return that pointer by value.
+    if (const PointerType *pt = dyn_cast<PointerType>(caughtType)) {
+      QualType pointeeType = pt->getPointeeType();
+      // When catching by reference, generally we should just ignore
+      // this by-value pointer and use the exception object instead.
+      if (!pointeeType->isRecordType()) {
+        cgf.cgm.errorNYI(loc,
+                         "initCatchParam: catching a pointer of non-record");
+        return;
+      }
+    }
+
+    bool endCatchMightThrow = caughtType->isRecordType();
+    mlir::Value exnPtr =
+        callBeginCatch(cgf, ehToken, exnPtrTy, endCatchMightThrow);
+    Address exnPtrAddr = Address(exnPtr, caughtExnAlignment);
+    cgf.setAddrOfLocalVar(&catchParam, exnPtrAddr);
+    return;
+  }
+
+  // Scalars and complexes.
+  cir::TypeEvaluationKind tek = cgf.getEvaluationKind(catchType);
+  if (tek != cir::TEK_Aggregate) {
+    // Notes for LLVM lowering:
+    // If the catch type is a pointer type, __cxa_begin_catch returns
+    // the pointer by value.
+    if (catchType->hasPointerRepresentation()) {
+      switch (catchType.getQualifiers().getObjCLifetime()) {
+      case Qualifiers::OCL_Strong:
+        cgf.cgm.errorNYI(loc,
+                         "initCatchParam: PointerRepresentation OCL_Strong");
+        return;
+
+      case Qualifiers::OCL_ExplicitNone:
+      case Qualifiers::OCL_Autoreleasing:
+        cgf.cgm.errorNYI(loc, "initCatchParam: PointerRepresentation "
+                              "OCL_ExplicitNone & OCL_Autoreleasing");
+        return;
+
+      case Qualifiers::OCL_None:
+        break;
+
+      case Qualifiers::OCL_Weak:
+        cgf.cgm.errorNYI(loc, "initCatchParam: PointerRepresentation OCL_Weak");
+        return;
+      }
+    }
+
+    // Otherwise, it returns a pointer into the exception object.
+    mlir::Value exnPtr = callBeginCatch(cgf, ehToken, exnPtrTy,
+                                        /*endMightThrow=*/false);
+    Address exnPtrAddr = Address(exnPtr, caughtExnAlignment);
+    cgf.setAddrOfLocalVar(&catchParam, exnPtrAddr);
+    return;
+  }
+
+  assert(isa<RecordType>(catchType) && "unexpected catch type!");
+  auto *catchRD = catchType->getAsCXXRecordDecl();
+  caughtExnAlignment = cgf.cgm.getClassPointerAlignment(catchRD);
+
+  // Check for a copy expression.  If we don't have a copy expression,
+  // that means a trivial copy is okay.
+  const Expr *copyExpr = catchParam.getInit();
+  if (!copyExpr) {
+    mlir::Value exnPtr =
+        callBeginCatch(cgf, ehToken, exnPtrTy, /*endMightThrow=*/true);
+    Address exnPtrAddr = Address(exnPtr, caughtExnAlignment);
+    cgf.setAddrOfLocalVar(&catchParam, exnPtrAddr);
+    return;
+  }
+
+  cgf.cgm.errorNYI(loc, "initCatchParam: cir::TEK_Aggregate non-trivial copy");
+}
+
+/// Begins a catch statement by initializing the catch variable and
+/// calling __cxa_begin_catch.
+void CIRGenFunction::emitBeginCatch(const CXXCatchStmt *catchStmt,
+                                    mlir::Value ehToken) {
+  // We have to be very careful with the ordering of cleanups here:
+  //   C++ [except.throw]p4:
+  //     The destruction [of the exception temporary] occurs
+  //     immediately after the destruction of the object declared in
+  //     the exception-declaration in the handler.
+  //
+  // So the precise ordering is:
+  //   1.  Construct catch variable.
+  //   2.  __cxa_begin_catch
+  //   3.  Enter __cxa_end_catch cleanup
+  //   4.  Enter dtor cleanup
+  //
+  // We do this by using a slightly abnormal initialization process.
+  // Delegation sequence:
+  //   - ExitCXXTryStmt opens a RunCleanupsScope
+  //     - EmitAutoVarAlloca creates the variable and debug info
+  //       - InitCatchParam initializes the variable from the exception
+  //       - CallBeginCatch calls __cxa_begin_catch
+  //       - CallBeginCatch enters the __cxa_end_catch cleanup
+  //     - EmitAutoVarCleanups enters the variable destructor cleanup
+  //   - EmitCXXTryStmt emits the code for the catch body
+  //   - EmitCXXTryStmt close the RunCleanupsScope
+  VarDecl *catchParam = catchStmt->getExceptionDecl();
+  if (!catchParam) {
+    callBeginCatch(*this, ehToken, builder.getVoidPtrTy(),
+                   /*endMightThrow=*/true);
+    return;
+  }
+
+  // Emit the local. Make sure the alloca's superseed the current scope, since
+  // these are going to be consumed by `cir.catch`, which is not within the
+  // current scope.
+  initCatchParam(*this, ehToken, *catchParam, Address::invalid(),
+                 catchStmt->getBeginLoc());
+}
+
 mlir::LogicalResult
 CIRGenFunction::emitCXXTryStmt(const CXXTryStmt &s,
                                cxxTryBodyEmitter &bodyCallback) {
@@ -384,7 +562,7 @@ CIRGenFunction::emitCXXTryStmt(const CXXTryStmt &s,
     // Initialize the catch variable.
     // TODO(cir): Move this out of CXXABI.
     assert(!cir::MissingFeatures::currentFuncletPad());
-    cgm.getCXXABI().emitBeginCatch(*this, catchStmt, ehToken);
+    emitBeginCatch(catchStmt, ehToken);
 
     // Emit the PGO counter increment.
     assert(!cir::MissingFeatures::incrementProfileCounter());

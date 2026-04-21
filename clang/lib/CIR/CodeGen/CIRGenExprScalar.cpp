@@ -1498,7 +1498,7 @@ public:
     if (numElementsSrc == 3 && numElementsDst != 3) {
       cgf.cgm.errorNYI(e->getSourceRange(),
                        "ScalarExprEmitter: VisitAsTypeExpr numElemsSrc = 3, "
-                       "numElemsDst = 3");
+                       "numElemsDst != 3");
       return {};
     }
 

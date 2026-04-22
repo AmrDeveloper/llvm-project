@@ -1458,7 +1458,7 @@ public:
     if (isa<cir::PointerType>(srcTy) && !isa<cir::PointerType>(dstTy)) {
       if (!isa<cir::IntType>(dstTy)) {
         cgf.cgm.errorNYI(
-            "ScalarExprEmitter: createCastsForTypeOfSameSize Case 3b");
+            "ScalarExprEmitter: createCastsForTypeOfSameSize Case 3a");
       }
 
       cgf.cgm.errorNYI(

@@ -7663,10 +7663,10 @@ def CIR_InitCatchParamOp : CIR_Op<"init_catch_param"> {
 
     ```
     %catch_token, %exn_ptr = cir.begin_catch %eh_token
-      : !cir.eh_token -> (!cir.catch_token, !cir.ptr<!s32i>)
+      : !cir.eh_token -> (!cir.catch_token, !cir.ptr<!void>)
     %param_addr = cir.alloca !s32i, !cir.ptr<!s32i>, ["e", init]
     cir.init_catch_param %exn_ptr to %param_addr
-      : !cir.ptr<!s32i>, !cir.ptr<!s32i>
+      : !cir.ptr<!void>, !cir.ptr<!s32i>
     ```
   }];
 

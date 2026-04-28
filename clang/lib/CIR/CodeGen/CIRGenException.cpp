@@ -321,94 +321,59 @@ static mlir::Value callBeginCatch(CIRGenFunction &cgf, mlir::Value ehToken,
 
 /// A "special initializer" callback for initializing a catch
 /// parameter during catch initialization.
-static void initCatchParam(CIRGenFunction &cgf, mlir::Value ehToken,
-                           const VarDecl &catchParam, Address paramAddr,
-                           SourceLocation loc) {
-  CIRGenBuilderTy builder = cgf.getBuilder();
+static void initCatchParam(CIRGenFunction &cgf, CIRGenBuilderTy &builder,
+                           mlir::Value ehToken, const VarDecl &catchParam,
+                           Address paramAddr, SourceLocation loc) {
   CanQualType catchType =
       cgf.cgm.getASTContext().getCanonicalType(catchParam.getType());
-  mlir::Type cirCatchTy = cgf.convertTypeForMem(catchType);
-  mlir::Type exnPtrTy = builder.getPointerTo(cirCatchTy);
-  CharUnits caughtExnAlignment = cgf.getPointerAlign();
+  // mlir::Type cirCatchTy = cgf.convertTypeForMem(catchType);
+  // mlir::Type exnPtrTy = builder.getPointerTo(cirCatchTy);
+  // CharUnits caughtExnAlignment = cgf.getPointerAlign();
+  cir::InitCatchKind kind;
+  bool endCatchMightThrow = true;
 
   // If we're catching by reference, we can just cast the object
   // pointer to the appropriate pointer.
   if (isa<ReferenceType>(catchType)) {
     QualType caughtType = cast<ReferenceType>(catchType)->getPointeeType();
-    // We have no way to tell the personality function that we're
-    // catching by reference, so if we're catching a pointer,
-    // __cxa_begin_catch will actually return that pointer by value.
-    if (const PointerType *pt = dyn_cast<PointerType>(caughtType)) {
-      QualType pointeeType = pt->getPointeeType();
-      // When catching by reference, generally we should just ignore
-      // this by-value pointer and use the exception object instead.
-      if (!pointeeType->isRecordType()) {
-        cgf.cgm.errorNYI(loc,
-                         "initCatchParam: catching a pointer of non-record");
-        return;
+    endCatchMightThrow = caughtType->isRecordType();
+    kind = cir::InitCatchKind::Reference;
+  } else {
+    cir::TypeEvaluationKind tek = cgf.getEvaluationKind(catchType);
+    if (tek == cir::TEK_Aggregate) {
+      assert(isa<RecordType>(catchType) && "unexpected catch type!");
+      const Expr *copyExpr = catchParam.getInit();
+      kind = !copyExpr ? cir::InitCatchKind::TrivilCopy
+                       : cir::InitCatchKind::NonTrivilCopy;
+    } else {
+      endCatchMightThrow = false;
+
+      // Scalars and complexes.
+      if (catchType->hasPointerRepresentation()) {
+        switch (catchType.getQualifiers().getObjCLifetime()) {
+        case Qualifiers::OCL_Weak:
+        case Qualifiers::OCL_Strong:
+          kind = cir::InitCatchKind::Objc;
+          break;
+
+        case Qualifiers::OCL_ExplicitNone:
+        case Qualifiers::OCL_Autoreleasing:
+        case Qualifiers::OCL_None:
+          kind = cir::InitCatchKind::Pointer;
+          break;
+        }
+      } else {
+        kind = cir::InitCatchKind::Scalar;
       }
     }
-
-    bool endCatchMightThrow = caughtType->isRecordType();
-    mlir::Value exnPtr =
-        callBeginCatch(cgf, ehToken, exnPtrTy, endCatchMightThrow);
-    Address exnPtrAddr = Address(exnPtr, caughtExnAlignment);
-    cgf.setAddrOfLocalVar(&catchParam, exnPtrAddr);
-    return;
   }
 
-  // Scalars and complexes.
-  cir::TypeEvaluationKind tek = cgf.getEvaluationKind(catchType);
-  if (tek != cir::TEK_Aggregate) {
-    // Notes for LLVM lowering:
-    // If the catch type is a pointer type, __cxa_begin_catch returns
-    // the pointer by value.
-    if (catchType->hasPointerRepresentation()) {
-      switch (catchType.getQualifiers().getObjCLifetime()) {
-      case Qualifiers::OCL_Strong:
-        cgf.cgm.errorNYI(loc,
-                         "initCatchParam: PointerRepresentation OCL_Strong");
-        return;
-
-      case Qualifiers::OCL_ExplicitNone:
-      case Qualifiers::OCL_Autoreleasing:
-        cgf.cgm.errorNYI(loc, "initCatchParam: PointerRepresentation "
-                              "OCL_ExplicitNone & OCL_Autoreleasing");
-        return;
-
-      case Qualifiers::OCL_None:
-        break;
-
-      case Qualifiers::OCL_Weak:
-        cgf.cgm.errorNYI(loc, "initCatchParam: PointerRepresentation OCL_Weak");
-        return;
-      }
-    }
-
-    // Otherwise, it returns a pointer into the exception object.
-    mlir::Value exnPtr = callBeginCatch(cgf, ehToken, exnPtrTy,
-                                        /*endMightThrow=*/false);
-    Address exnPtrAddr = Address(exnPtr, caughtExnAlignment);
-    cgf.setAddrOfLocalVar(&catchParam, exnPtrAddr);
-    return;
-  }
-
-  assert(isa<RecordType>(catchType) && "unexpected catch type!");
-  auto *catchRD = catchType->getAsCXXRecordDecl();
-  caughtExnAlignment = cgf.cgm.getClassPointerAlignment(catchRD);
-
-  // Check for a copy expression.  If we don't have a copy expression,
-  // that means a trivial copy is okay.
-  const Expr *copyExpr = catchParam.getInit();
-  if (!copyExpr) {
-    mlir::Value exnPtr =
-        callBeginCatch(cgf, ehToken, exnPtrTy, /*endMightThrow=*/true);
-    Address exnPtrAddr = Address(exnPtr, caughtExnAlignment);
-    cgf.setAddrOfLocalVar(&catchParam, exnPtrAddr);
-    return;
-  }
-
-  cgf.cgm.errorNYI(loc, "initCatchParam: cir::TEK_Aggregate non-trivial copy");
+  mlir::Value exnPtr =
+      callBeginCatch(cgf, ehToken, builder.getVoidPtrTy(), endCatchMightThrow);
+  CIRGenFunction::AutoVarEmission var = cgf.emitAutoVarAlloca(catchParam);
+  cir::InitCatchParamOp::create(builder, builder.getUnknownLoc(), exnPtr,
+                                var.getAllocatedAddress().getPointer(), kind);
+  cgf.emitAutoVarCleanups(var);
 }
 
 /// Begins a catch statement by initializing the catch variable and
@@ -447,7 +412,7 @@ void CIRGenFunction::emitBeginCatch(const CXXCatchStmt *catchStmt,
   // Emit the local. Make sure the alloca's superseed the current scope, since
   // these are going to be consumed by `cir.catch`, which is not within the
   // current scope.
-  initCatchParam(*this, ehToken, *catchParam, Address::invalid(),
+  initCatchParam(*this, builder, ehToken, *catchParam, Address::invalid(),
                  catchStmt->getBeginLoc());
 }
 
@@ -473,8 +438,8 @@ CIRGenFunction::emitCXXTryStmt(const CXXTryStmt &s,
   builder.restoreInsertionPoint(scopeIP);
 
   const llvm::Triple &t = getTarget().getTriple();
-  // If we encounter a try statement on in an OpenMP target region offloaded to
-  // a GPU, we treat it as a basic block.
+  // If we encounter a try statement on in an OpenMP target region offloaded
+  // to a GPU, we treat it as a basic block.
   const bool isTargetDevice =
       (cgm.getLangOpts().OpenMPIsTargetDevice && (t.isNVPTX() || t.isAMDGCN()));
   if (isTargetDevice) {
@@ -613,15 +578,16 @@ mlir::LogicalResult CIRGenFunction::emitCXXTryStmt(const CXXTryStmt &s) {
   return emitCXXTryStmt(s, emitter);
 }
 
-// in classic codegen this function is mapping to `isInvokeDest` previously and
-// currently it's mapping to the conditions that performs early returns in
-// `getInvokeDestImpl`, in CIR we need the condition to know if the EH scope may
-// throw exception or now.
+// in classic codegen this function is mapping to `isInvokeDest` previously
+// and currently it's mapping to the conditions that performs early returns in
+// `getInvokeDestImpl`, in CIR we need the condition to know if the EH scope
+// may throw exception or now.
 bool CIRGenFunction::isCatchOrCleanupRequired() {
-  // If exceptions are disabled/ignored and SEH is not in use, then there is no
-  // invoke destination. SEH "works" even if exceptions are off. In practice,
-  // this means that C++ destructors and other EH cleanups don't run, which is
-  // consistent with MSVC's behavior, except in the presence of -EHa
+  // If exceptions are disabled/ignored and SEH is not in use, then there is
+  // no invoke destination. SEH "works" even if exceptions are off. In
+  // practice, this means that C++ destructors and other EH cleanups don't
+  // run, which is consistent with MSVC's behavior, except in the presence of
+  // -EHa
   const LangOptions &lo = cgm.getLangOpts();
   if (!lo.Exceptions || lo.IgnoreExceptions) {
     if (!lo.Borland && !lo.MicrosoftExt)

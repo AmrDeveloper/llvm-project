@@ -149,6 +149,7 @@ void test_catch_all_and_specific_with_cleanup() {
 // CIR-LABEL: cir.func {{.*}} @_Z40test_catch_all_and_specific_with_cleanupv()
 // CIR:   cir.scope {
 // CIR:     %[[S:.*]] = cir.alloca !rec_S, !cir.ptr<!rec_S>, ["s", init]
+// CIR:     %[[E:.*]] = cir.alloca !s32i, !cir.ptr<!s32i>, ["e"]
 // CIR:     cir.try {
 // CIR:       cir.call @_ZN1SC1Ev(%[[S]])
 // CIR:       cir.cleanup.scope {
@@ -160,8 +161,9 @@ void test_catch_all_and_specific_with_cleanup() {
 // CIR:       }
 // CIR:       cir.yield
 // CIR:     } catch [type #cir.global_view<@_ZTIi> : !cir.ptr<!u8i>] (%{{.*}}: !cir.eh_token {{.*}}) {
-// CIR:       %{{.*}}, %[[EXN:.*]] = cir.begin_catch %{{.*}} : !cir.eh_token -> (!cir.catch_token, !cir.ptr<!s32i>)
+// CIR:       %{{.*}}, %[[EXN:.*]] = cir.begin_catch %{{.*}} : !cir.eh_token -> (!cir.catch_token, !cir.ptr<!void>)
 // CIR:       cir.cleanup.scope {
+// CIR:         cir.init_catch_param scalar %[[EXN]] to %[[E]] : !cir.ptr<!void>, !cir.ptr<!s32i>
 // CIR:         cir.yield
 // CIR:       } cleanup all {
 // CIR:         cir.end_catch %{{.*}} : !cir.catch_token
@@ -222,7 +224,8 @@ void test_catch_all_and_specific_with_cleanup() {
 //
 // Catch (int): bind e, end_catch, merge to return.
 // CIR-FLAT:       ^[[CATCH_INT]](%{{.*}}: !cir.eh_token):
-// CIR-FLAT:         %{{.*}}, %[[EXN_PTR:.*]] = cir.begin_catch %{{.*}} : !cir.eh_token -> (!cir.catch_token, !cir.ptr<!s32i>)
+// CIR-FLAT:         %{{.*}}, %[[EXN_PTR:.*]] = cir.begin_catch %{{.*}} : !cir.eh_token -> (!cir.catch_token, !cir.ptr<!void>)
+// CIR-FLAT:         cir.init_catch_param scalar %[[EXN_PTR]] to %{{.*}} : !cir.ptr<!void>, !cir.ptr<!s32i>
 // CIR-FLAT:         cir.end_catch %{{.*}} : !cir.catch_token
 // CIR-FLAT:         cir.br ^{{.*}}
 //

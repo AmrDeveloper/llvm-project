@@ -323,12 +323,9 @@ static mlir::Value callBeginCatch(CIRGenFunction &cgf, mlir::Value ehToken,
 /// parameter during catch initialization.
 static void initCatchParam(CIRGenFunction &cgf, CIRGenBuilderTy &builder,
                            mlir::Value ehToken, const VarDecl &catchParam,
-                           Address paramAddr, SourceLocation loc) {
+                           SourceLocation loc) {
   CanQualType catchType =
       cgf.cgm.getASTContext().getCanonicalType(catchParam.getType());
-  // mlir::Type cirCatchTy = cgf.convertTypeForMem(catchType);
-  // mlir::Type exnPtrTy = builder.getPointerTo(cirCatchTy);
-  // CharUnits caughtExnAlignment = cgf.getPointerAlign();
   cir::InitCatchKind kind;
   bool endCatchMightThrow = true;
 
@@ -371,7 +368,7 @@ static void initCatchParam(CIRGenFunction &cgf, CIRGenBuilderTy &builder,
   mlir::Value exnPtr =
       callBeginCatch(cgf, ehToken, builder.getVoidPtrTy(), endCatchMightThrow);
   CIRGenFunction::AutoVarEmission var = cgf.emitAutoVarAlloca(catchParam);
-  cir::InitCatchParamOp::create(builder, builder.getUnknownLoc(), exnPtr,
+  cir::InitCatchParamOp::create(builder, cgf.getLoc(loc), exnPtr,
                                 var.getAllocatedAddress().getPointer(), kind);
   cgf.emitAutoVarCleanups(var);
 }
@@ -412,7 +409,7 @@ void CIRGenFunction::emitBeginCatch(const CXXCatchStmt *catchStmt,
   // Emit the local. Make sure the alloca's superseed the current scope, since
   // these are going to be consumed by `cir.catch`, which is not within the
   // current scope.
-  initCatchParam(*this, builder, ehToken, *catchParam, Address::invalid(),
+  initCatchParam(*this, builder, ehToken, *catchParam,
                  catchStmt->getBeginLoc());
 }
 

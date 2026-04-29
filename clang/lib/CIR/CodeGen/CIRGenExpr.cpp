@@ -305,6 +305,24 @@ Address CIRGenFunction::emitPointerWithAlignment(const Expr *expr,
 
 void CIRGenFunction::emitStoreThroughExtVectorComponentLValue(RValue src,
                                                               LValue dst) {
+  auto getScalarSizeInBits = [&](mlir::Type ty) -> unsigned {
+    mlir::Type scalarTy = mlir::isa<cir::VectorType>(ty)
+                              ? mlir::cast<cir::VectorType>(ty).getElementType()
+                              : ty;
+    cir::CIRDataLayout dl = cgm.getDataLayout();
+    return dl.getTypeSizeInBits(scalarTy).getFixedValue();
+  };
+
+  mlir::Value srcVal = src.getValue();
+  Address dstAddr = dst.getExtVectorAddress();
+  if (getScalarSizeInBits(dstAddr.getElementType()) >
+      getScalarSizeInBits(srcVal.getType())) {
+    cgm.errorNYI(
+        dst.getPointer().getLoc(),
+        "emitStoreThroughExtVectorComponentLValue: dstTySize > srcTysize");
+    return;
+  }
+
   if (getLangOpts().HLSL) {
     cgm.errorNYI(dst.getPointer().getLoc(),
                  "emitStoreThroughExtVectorComponentLValue: HLSL");
@@ -315,11 +333,9 @@ void CIRGenFunction::emitStoreThroughExtVectorComponentLValue(RValue src,
   // value now.
   mlir::Location loc = dst.getExtVectorPointer().getLoc();
 
-  mlir::Value srcVal = src.getValue();
-  Address dstAddr = dst.getExtVectorAddress();
   mlir::ArrayAttr elts = dst.getExtVectorElts();
 
-  mlir::Value vec = builder.createLoad(loc, dstAddr);
+  mlir::Value vec = builder.createLoad(loc, dstAddr, dst.isVolatile());
   if (const auto *vecTy = dst.getType()->getAs<clang::VectorType>()) {
     unsigned numSrcElts = vecTy->getNumElements();
     unsigned numDstElts = cast<cir::VectorType>(vec.getType()).getSize();
@@ -327,7 +343,7 @@ void CIRGenFunction::emitStoreThroughExtVectorComponentLValue(RValue src,
       // Use shuffle vector is the src and destination are the same number of
       // elements and restore the vector mask since it is on the side it will be
       // stored.
-      SmallVector<int64_t, 4> mask(numDstElts);
+      SmallVector<int64_t> mask(numDstElts);
       for (unsigned i = 0; i != numDstElts; ++i)
         mask[getAccessedFieldNo(i, elts)] = i;
 
@@ -337,13 +353,13 @@ void CIRGenFunction::emitStoreThroughExtVectorComponentLValue(RValue src,
       // into the destination.
       // FIXME: since we're shuffling with undef, can we just use the indices
       //        into that?  This could be simpler.
-      SmallVector<int64_t, 4> extMask(numDstElts, -1);
+      SmallVector<int64_t> extMask(numDstElts, -1);
       std::iota(extMask.begin(), extMask.begin() + numSrcElts, 0);
 
       mlir::Value extSrcVal = builder.createVecShuffle(loc, srcVal, extMask);
 
       // build identity
-      SmallVector<int64_t, 4> mask(numDstElts);
+      SmallVector<int64_t> mask(numDstElts);
       std::iota(mask.begin(), mask.begin() + numDstElts, 0);
 
       // When the vector size is odd and .odd or .hi is used, the last element
@@ -387,9 +403,8 @@ void CIRGenFunction::emitStoreThroughLValue(RValue src, LValue dst,
       return;
     }
 
-    if (dst.isExtVectorElt()) {
+    if (dst.isExtVectorElt())
       return emitStoreThroughExtVectorComponentLValue(src, dst);
-    }
 
     assert(dst.isBitField() && "Unknown LValue type");
     emitStoreThroughBitfieldLValue(src, dst);

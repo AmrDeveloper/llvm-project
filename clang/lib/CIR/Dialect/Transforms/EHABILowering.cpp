@@ -552,9 +552,9 @@ void ItaniumEHLowering::lowerDispatch(
 ///   - Scalar (any other by-value catch): treat the begin_catch result as a
 ///     pointer to the value, load it, and store it into the alloca.
 ///   - Objc: Handle pointer representation with ObjCLifetime.
-///   - TrivilCopy: copy the exception
+///   - TrivialCopy: copy the exception
 ///     object's bytes into the alloca via cir.copy.
-///   - NonTrivilCopy: copy the exception
+///   - NonTrivialCopy: copy the exception
 ///     object's bytes into the alloca via copy constructor.
 ///
 void ItaniumEHLowering::lowerInitCatchParam(cir::InitCatchParamOp op) {
@@ -585,14 +585,14 @@ void ItaniumEHLowering::lowerInitCatchParam(cir::InitCatchParamOp op) {
     cir::StoreOp::create(builder, loc, casted, paramAddr, {}, {}, {}, {});
     break;
   }
-  case InitCatchKind::TrivilCopy: {
+  case InitCatchKind::TrivialCopy: {
     mlir::Value srcPtr = cir::CastOp::create(builder, loc, paramAddrType,
                                              cir::CastKind::bitcast, exnPtr);
     cir::CopyOp::create(builder, loc, paramAddr, srcPtr, {}, {});
     break;
   }
-  case InitCatchKind::NonTrivilCopy: {
-    llvm_unreachable("InitCatchParam: non-trivil-copy is NYI");
+  case InitCatchKind::NonTrivialCopy: {
+    llvm_unreachable("InitCatchParam: non-trivial-copy is NYI");
     break;
   }
   case InitCatchKind::Scalar: {
@@ -613,7 +613,7 @@ void ItaniumEHLowering::lowerInitCatchParam(cir::InitCatchParamOp op) {
     break;
   }
   case InitCatchKind::Objc:
-    llvm_unreachable("InitCatchParam: ObjCLifetime");
+    llvm_unreachable("InitCatchParam: ObjCLifetime is NYI");
     break;
   }
 

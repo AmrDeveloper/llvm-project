@@ -274,30 +274,11 @@ void CIRGenFunction::addCatchHandlerAttr(
 }
 
 namespace {
-/// From traditional LLVM, useful info for LLVM lowering support:
-/// A cleanup to call __cxa_end_catch.  In many cases, the caught
-/// exception type lets us state definitively that the thrown exception
-/// type does not have a destructor.  In particular:
-///   - Catch-alls tell us nothing, so we have to conservatively
-///     assume that the thrown exception might have a destructor.
-///   - Catches by reference behave according to their base types.
-///   - Catches of non-record types will only trigger for exceptions
-///     of non-record types, which never have destructors.
-///   - Catches of record types can trigger for arbitrary subclasses
-///     of the caught type, so we have to assume the actual thrown
-///     exception type might have a throwing destructor, even if the
-///     caught type's destructor is trivial or nothrow.
 struct CallEndCatch final : EHScopeStack::Cleanup {
-  CallEndCatch(bool mightThrow, mlir::Value catchToken)
-      : mightThrow(mightThrow), catchToken(catchToken) {}
-  bool mightThrow;
+  CallEndCatch(mlir::Value catchToken) : catchToken(catchToken) {}
   mlir::Value catchToken;
 
   void emit(CIRGenFunction &cgf, Flags flags) override {
-    // Traditional LLVM codegen would emit a call to __cxa_end_catch
-    // here. For CIR, just let it pass since the cleanup is going
-    // to be emitted on a later pass when lowering the catch region.
-    // CGF.EmitRuntimeCallOrTryCall(getEndCatchFn(CGF.CGM));
     cir::EndCatchOp::create(cgf.getBuilder(), *cgf.currSrcLoc, catchToken);
     cir::YieldOp::create(cgf.getBuilder(), *cgf.currSrcLoc);
   }
@@ -305,16 +286,14 @@ struct CallEndCatch final : EHScopeStack::Cleanup {
 } // namespace
 
 static mlir::Value callBeginCatch(CIRGenFunction &cgf, mlir::Value ehToken,
-                                  mlir::Type exnPtrTy, bool endMightThrow) {
+                                  mlir::Type exnPtrTy) {
   auto catchTokenTy = cir::CatchTokenType::get(cgf.getBuilder().getContext());
   auto beginCatch = cir::BeginCatchOp::create(cgf.getBuilder(),
                                               cgf.getBuilder().getUnknownLoc(),
                                               catchTokenTy, exnPtrTy, ehToken);
 
-  cgf.ehStack.pushCleanup<CallEndCatch>(
-      NormalAndEHCleanup,
-      endMightThrow && !cgf.cgm.getLangOpts().AssumeNothrowExceptionDtor,
-      beginCatch.getCatchToken());
+  cgf.ehStack.pushCleanup<CallEndCatch>(NormalAndEHCleanup,
+                                        beginCatch.getCatchToken());
 
   return beginCatch.getExnPtr();
 }
@@ -327,24 +306,19 @@ static void initCatchParam(CIRGenFunction &cgf, CIRGenBuilderTy &builder,
   CanQualType catchType =
       cgf.cgm.getASTContext().getCanonicalType(catchParam.getType());
   cir::InitCatchKind kind;
-  bool endCatchMightThrow = true;
 
   // If we're catching by reference, we can just cast the object
   // pointer to the appropriate pointer.
   if (isa<ReferenceType>(catchType)) {
-    QualType caughtType = cast<ReferenceType>(catchType)->getPointeeType();
-    endCatchMightThrow = caughtType->isRecordType();
     kind = cir::InitCatchKind::Reference;
   } else {
     cir::TypeEvaluationKind tek = cgf.getEvaluationKind(catchType);
     if (tek == cir::TEK_Aggregate) {
       assert(isa<RecordType>(catchType) && "unexpected catch type!");
       const Expr *copyExpr = catchParam.getInit();
-      kind = !copyExpr ? cir::InitCatchKind::TrivilCopy
-                       : cir::InitCatchKind::NonTrivilCopy;
+      kind = !copyExpr ? cir::InitCatchKind::TrivialCopy
+                       : cir::InitCatchKind::NonTrivialCopy;
     } else {
-      endCatchMightThrow = false;
-
       // Scalars and complexes.
       if (catchType->hasPointerRepresentation()) {
         switch (catchType.getQualifiers().getObjCLifetime()) {
@@ -365,8 +339,7 @@ static void initCatchParam(CIRGenFunction &cgf, CIRGenBuilderTy &builder,
     }
   }
 
-  mlir::Value exnPtr =
-      callBeginCatch(cgf, ehToken, builder.getVoidPtrTy(), endCatchMightThrow);
+  mlir::Value exnPtr = callBeginCatch(cgf, ehToken, builder.getVoidPtrTy());
   CIRGenFunction::AutoVarEmission var = cgf.emitAutoVarAlloca(catchParam);
   cir::InitCatchParamOp::create(builder, cgf.getLoc(loc), exnPtr,
                                 var.getAllocatedAddress().getPointer(), kind);
@@ -385,24 +358,13 @@ void CIRGenFunction::emitBeginCatch(const CXXCatchStmt *catchStmt,
   //
   // So the precise ordering is:
   //   1.  Construct catch variable.
-  //   2.  __cxa_begin_catch
-  //   3.  Enter __cxa_end_catch cleanup
+  //   2.  begin_catch
+  //   3.  Enter CallEndCatch cleanup
   //   4.  Enter dtor cleanup
   //
-  // We do this by using a slightly abnormal initialization process.
-  // Delegation sequence:
-  //   - ExitCXXTryStmt opens a RunCleanupsScope
-  //     - EmitAutoVarAlloca creates the variable and debug info
-  //       - InitCatchParam initializes the variable from the exception
-  //       - CallBeginCatch calls __cxa_begin_catch
-  //       - CallBeginCatch enters the __cxa_end_catch cleanup
-  //     - EmitAutoVarCleanups enters the variable destructor cleanup
-  //   - EmitCXXTryStmt emits the code for the catch body
-  //   - EmitCXXTryStmt close the RunCleanupsScope
   VarDecl *catchParam = catchStmt->getExceptionDecl();
   if (!catchParam) {
-    callBeginCatch(*this, ehToken, builder.getVoidPtrTy(),
-                   /*endMightThrow=*/true);
+    callBeginCatch(*this, ehToken, builder.getVoidPtrTy());
     return;
   }
 

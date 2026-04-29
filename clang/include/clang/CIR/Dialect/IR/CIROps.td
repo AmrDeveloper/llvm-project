@@ -7641,8 +7641,8 @@ def CIR_InitCatchKind : CIR_I32EnumAttr<
     I32EnumAttrCase<"Pointer", 1, "pointer">,
     I32EnumAttrCase<"Scalar", 2, "scalar">,
     I32EnumAttrCase<"Objc", 3, "objc">,
-    I32EnumAttrCase<"TrivilCopy", 4, "trivil_copy">,
-    I32EnumAttrCase<"NonTrivilCopy", 5, "non_trivil_copy">,
+    I32EnumAttrCase<"TrivialCopy", 4, "trivial_copy">,
+    I32EnumAttrCase<"NonTrivialCopy", 5, "non_trivial_copy">,
 ]>;
 
 def CIR_InitCatchParamOp : CIR_Op<"init_catch_param"> {

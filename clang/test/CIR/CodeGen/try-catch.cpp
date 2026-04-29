@@ -1002,7 +1002,7 @@ void call_function_inside_try_catch_with_aggregate_exception_type() {
 // CIR:   } catch [type #cir.global_view<@_ZTI11CustomError> : !cir.ptr<!u8i>] (%{{.*}}: !cir.eh_token {{.*}}) {
 // CIR:     %[[CATCH_TOKEN:.*]], %[[EXN_PTR:.*]] = cir.begin_catch %{{.*}} : !cir.eh_token -> (!cir.catch_token, !cir.ptr<!void>)
 // CIR:     cir.cleanup.scope {
-// CIR:       cir.init_catch_param trivil_copy %[[EXN_PTR]] to %{{.*}} : !cir.ptr<!void>, !cir.ptr<!rec_CustomError>
+// CIR:       cir.init_catch_param trivial_copy %[[EXN_PTR]] to %{{.*}} : !cir.ptr<!void>, !cir.ptr<!rec_CustomError>
 // CIR:       cir.yield
 // CIR:     } cleanup all {
 // CIR:       cir.end_catch %[[CATCH_TOKEN]] : !cir.catch_token
@@ -1114,7 +1114,6 @@ void call_function_inside_try_catch_with_ref_ptr_of_record_exception_type() {
 
 // CIR: cir.func {{.*}} @_Z68call_function_inside_try_catch_with_ref_ptr_of_record_exception_typev(){{.*}} personality(@__gxx_personality_v0){{.*}} {
 // CIR:   %[[E_ADDR:.*]] = cir.alloca !cir.ptr<!cir.ptr<!rec_Record>>, !cir.ptr<!cir.ptr<!cir.ptr<!rec_Record>>>, ["ref_ptr", const]
-// CIR:   %[[EXN_BYREF_TMP:.*]] = cir.alloca !cir.ptr<!rec_Record>, !cir.ptr<!cir.ptr<!rec_Record>>, ["exn.byref.tmp"]
 // CIR:   cir.try {
 // CIR:     %[[CALL:.*]] = cir.call @_Z8divisionv() : () -> (!s32i {llvm.noundef})
 // CIR:     cir.yield
